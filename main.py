@@ -4,9 +4,8 @@ from datetime import datetime
 from flask import Flask, request
 
 # =============== پیکربندی ===============
-TOKEN = 'توکن_ربات_تلگرام_اینجا'
-CHAT_ID = 'آی‌دی_چت_اینجا'
-
+TOKEN = '7665819781:AAFqklWxMbzvtWydzfolKwDZFbS2lZ4SjeM'
+CHAT_ID = '5451942674'
 # =============== ارسال پیام به تلگرام ===============
 def send_message(message):
     url = f'https://api.telegram.org/bot{TOKEN}/sendMessage'
