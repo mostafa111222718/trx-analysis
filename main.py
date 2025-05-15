@@ -1,122 +1,156 @@
 import requests
 import time
 from datetime import datetime
-from flask import Flask, request
 
-# =============== پیکربندی ===============
+# توکن ربات و chat_id
 TOKEN = '7665819781:AAFqklWxMbzvtWydzfolKwDZFbS2lZ4SjeM'
 CHAT_ID = '5451942674'
 
-# =============== ارسال پیام به تلگرام ===============
+# ارسال پیام به تلگرام
 def send_message(message):
     url = f'https://api.telegram.org/bot{TOKEN}/sendMessage'
     params = {
         'chat_id': CHAT_ID,
-        'text': message
+        'text': message,
+        'parse_mode': 'HTML'  # اضافه کردم برای بهتر شدن نمایش پیام‌ها
     }
     requests.get(url, params=params)
 
-# =============== گرفتن داده از KuCoin ===============
-def get_price_data(symbol='TRX-USDT', interval='1day', limit=200):
-    url = 'https://api.kucoin.com/api/v1/market/candles'
+# گرفتن داده‌ها از CoinEx API برای TRX (با تایم فریم دلخواه)
+def get_trx_data(interval='1d'):
+    url = 'https://api.coinex.com/v1/market/kline'
+    # مپ کردن تایم فریم Binance به CoinEx
+    interval_map = {
+        '1d': '1day',
+        '4h': '4hour'
+    }
     params = {
-        'symbol': symbol,
-        'type': interval,
+        'market': 'trxusdt',
+        'type': interval_map.get(interval, '1day'),
+        'limit': 500
     }
     response = requests.get(url, params=params)
-    if response.status_code != 200:
-        raise Exception(f'خطا در دریافت داده‌های {symbol} از KuCoin.')
-    data = response.json()['data']
-    data.reverse()
-    return data[:limit]
+    data = response.json()
+    if data['code'] != 0:
+        # اگر خطایی بود None برگردان
+        return None
+    # داده‌های CoinEx داخل data['data'] هست به صورت لیست هر تیکه:
+    # [time, open, close, high, low, volume]
+    return data['data']
 
-# =============== محاسبه RSI ===============
+# محاسبه RSI از داده‌های قیمت
 def calculate_rsi(data, period=14):
-    closes = [float(item[2]) for item in data]
-    gains, losses = [], []
+    closes = [float(entry[2]) for entry in data]  # قیمت‌های بسته شدن - index 2 در داده کوین‌اکس
+    gains = []
+    losses = []
+
     for i in range(1, len(closes)):
-        change = closes[i] - closes[i - 1]
-        gains.append(max(0, change))
-        losses.append(max(0, -change))
+        change = closes[i] - closes[i-1]
+        if change > 0:
+            gains.append(change)
+            losses.append(0)
+        else:
+            losses.append(-change)
+            gains.append(0)
+
     avg_gain = sum(gains[-period:]) / period
     avg_loss = sum(losses[-period:]) / period
-    if avg_loss == 0:
-        return 100
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
 
-# =============== محاسبه MACD ===============
+    if avg_loss == 0:
+        rsi = 100
+    else:
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+# محاسبه MACD از داده‌های قیمت
 def calculate_macd(data, fast_period=12, slow_period=26, signal_period=9):
-    closes = [float(item[2]) for item in data]
-    def ema(values, period):
-        ema_vals = [sum(values[:period]) / period]
-        k = 2 / (period + 1)
-        for price in values[period:]:
-            ema_vals.append(price * k + ema_vals[-1] * (1 - k))
-        return ema_vals
-    fast = ema(closes, fast_period)
-    slow = ema(closes, slow_period)
-    macd = [f - s for f, s in zip(fast[-len(slow):], slow)]
-    signal = ema(macd, signal_period)
+    closes = [float(entry[2]) for entry in data]  # قیمت‌های بسته شدن - index 2
+    fast_ema = [sum(closes[:fast_period]) / fast_period]
+    slow_ema = [sum(closes[:slow_period]) / slow_period]
+
+    # محاسبه MACD
+    for i in range(fast_period, len(closes)):
+        fast_ema.append((closes[i] * (2 / (fast_period + 1))) + (fast_ema[-1] * (1 - (2 / (fast_period + 1)))))
+        slow_ema.append((closes[i] * (2 / (slow_period + 1))) + (slow_ema[-1] * (1 - (2 / (slow_period + 1)))))
+
+    macd = [fast - slow for fast, slow in zip(fast_ema, slow_ema)]
+    signal = [sum(macd[i:i + signal_period]) / signal_period for i in range(len(macd) - signal_period + 1)]
     return macd[-1], signal[-1]
 
-# =============== ساخت پیام تحلیل ===============
-def build_analysis_message(symbol, interval='1day'):
-    try:
-        data = get_price_data(symbol.replace("USDT", "-USDT"), interval=interval)
-    except:
-        return f"❌ خطا در دریافت داده‌های {symbol} از KuCoin."
-
+# تحلیل روزانه TRX
+def get_daily_analysis():
+    data = get_trx_data(interval='1d')
+    if data is None:
+        return "❌ خطا در تحلیل روزانه: Failed to fetch data from CoinEx."
     rsi = calculate_rsi(data)
     macd, signal = calculate_macd(data)
-    closes = [float(item[2]) for item in data]
-    ma50 = sum(closes[-50:]) / 50
-    ma200 = sum(closes[-200:]) / 200
-    price = float(data[-1][2])
 
-    msg = f"📊 تحلیل {'روزانه' if interval == '1day' else '4 ساعته'} {symbol}:\n"
-    msg += f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-    msg += f"قیمت فعلی: {price:.3f} USDT\n"
-    msg += f"RSI: {rsi:.2f} {'✅' if rsi < 70 else '❌'}\n"
-    msg += f"MACD: {macd:.4f} {'صعودی' if macd > signal else 'نزولی'} {'✅' if macd > signal else '❌'}\n"
-    msg += f"MA50: {ma50:.3f} | MA200: {ma200:.3f}\n"
+    # ایجاد پیام تحلیل روزانه
+    message = f"📊 تحلیل روزانه TRX:\n"
+    message += f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d')}\n"
+    message += f"قیمت فعلی: {float(data[-1][2]):.3f} USDT\n"
+    message += f"RSI: {rsi:.2f} {'✅' if rsi < 70 else '❌'}\n"
+    message += f"MACD: {macd:.4f} {'صعودی' if macd > signal else 'نزولی'} {'✅' if macd > signal else '❌'}\n"
 
+    # وضعیت MA50 و MA200
+    ma50 = sum([float(entry[2]) for entry in data[-50:]]) / 50
+    ma200 = sum([float(entry[2]) for entry in data[-200:]]) / 200
+    message += f"MA50: {ma50:.3f} | MA200: {ma200:.3f}\n"
+
+    # هشدار خرید و فروش
     if rsi < 30 and macd > signal:
-        msg += "⚡️ هشدار خرید فعال ✅"
+        message += "⚡️ هشدار خرید فعال ✅"
     elif rsi > 70 and macd < signal:
-        msg += "⚡️ هشدار فروش فعال ❌"
+        message += "⚡️ هشدار فروش فعال ❌"
     else:
-        msg += "هیچ هشدار فعال نیست ❌"
-    return msg
+        message += "هیچ هشدار فعال نیست ❌"
 
-# =============== ارسال هر ۴ ساعت ===============
-def periodic_analysis():
-    while True:
-        daily = build_analysis_message('TRXUSDT', '1day')
-        h4 = build_analysis_message('TRXUSDT', '4hour')
-        send_message(f"{daily}\n\n{'-'*20}\n\n{h4}")
-        time.sleep(14400)  # هر 4 ساعت
+    return message
 
-# =============== پاسخ به پیام‌ها در تلگرام ===============
-app = Flask(__name__)
+# تحلیل 4 ساعته TRX
+def get_4h_analysis():
+    data = get_trx_data(interval='4h')
+    if data is None:
+        return "❌ خطا در تحلیل 4 ساعته: Failed to fetch data from CoinEx."
+    rsi = calculate_rsi(data)
+    macd, signal = calculate_macd(data)
 
-@app.route('/', methods=['POST'])
-def webhook():
-    update = request.json
-    if 'message' in update:
-        text = update['message'].get('text', '').lower()
-        chat_id = update['message']['chat']['id']
-        if text in ['trx', 'btc', 'eth']:
-            symbol = text.upper() + 'USDT'
-            msg = build_analysis_message(symbol, '1day') + "\n\n" + build_analysis_message(symbol, '4hour')
-            url = f'https://api.telegram.org/bot{TOKEN}/sendMessage'
-            params = {'chat_id': chat_id, 'text': msg}
-            requests.get(url, params=params)
-    return '', 200
+# ایجاد پیام تحلیل 4 ساعته
+    message = f"📊 تحلیل 4 ساعته TRX:\n"
+    message += f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+    message += f"قیمت فعلی: {float(data[-1][2]):.3f} USDT\n"
+    message += f"RSI: {rsi:.2f} {'✅' if rsi < 70 else '❌'}\n"
+    message += f"MACD: {macd:.4f} {'صعودی' if macd > signal else 'نزولی'} {'✅' if macd > signal else '❌'}\n"
 
-# اگر می‌خوای برنامه لوکال اجرا بشه:
-# periodic_analysis()
+    # وضعیت MA50 و MA200
+    ma50 = sum([float(entry[2]) for entry in data[-50:]]) / 50
+    ma200 = sum([float(entry[2]) for entry in data[-200:]]) / 200
+    message += f"MA50: {ma50:.3f} | MA200: {ma200:.3f}\n"
 
-# اگر روی هاست (مثل Replit) هستی، از وب‌هوک استفاده کن:
-if __name__ == '__main__':
-    app.run(port=5000)
+    # هشدار خرید و فروش
+    if rsi < 30 and macd > signal:
+        message += "⚡️ هشدار خرید فعال ✅"
+    elif rsi > 70 and macd < signal:
+        message += "⚡️ هشدار فروش فعال ❌"
+    else:
+        message += "هیچ هشدار فعال نیست ❌"
+
+    return message
+
+# ارسال تحلیل روزانه و 4 ساعته
+def send_combined_analysis():
+    daily_message = get_daily_analysis()
+    h4_message = get_4h_analysis()
+
+    # ترکیب دو تحلیل در یک پیام
+    combined_message = f"{daily_message}\n\n{'-'*20}\n\n{h4_message}"
+    send_message(combined_message)
+
+# ارسال تحلیل روزانه و 4 ساعته (یک بار اجرا)
+send_combined_analysis()
+
+# تنظیم ارسال تحلیل هر 4 ساعت
+while True:
+    send_combined_analysis()
+    time.sleep(14400)  # هر 4 ساعت یک بار اجرا می‌شود
