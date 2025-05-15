@@ -2,6 +2,7 @@ from flask import Flask, request
 import requests
 import time
 from datetime import datetime
+import threading
 
 app = Flask(__name__)
 
@@ -98,14 +99,20 @@ def telegram_webhook():
             analysis = full_analysis(text)
             send_message(analysis)
         else:
-            send_message("لطفاً نام رمز ارز (مثل trx یا btc) را وارد کنید.")
+            send_message("لطفاً فقط نام یکی از این ارزها را وارد کنید: trx, btc, eth, doge, ada, usdt")
     return {"ok": True}
 
-# اجرای تحلیل خودکار هر 4 ساعت (برای حالت آفلاین یا دستی)
-if __name__ == "__main__":
+# تابع تحلیل خودکار جداگانه
+def auto_send_loop():
     while True:
         for symbol in SYMBOLS:
             message = full_analysis(symbol)
             send_message(message)
-            time.sleep(1)  # فاصله بین پیام‌ها برای جلوگیری از محدودیت تلگرام
-        time.sleep(14400)  # 4 ساعت = 14400 ثانیه
+            time.sleep(1)
+        time.sleep(14400)
+
+if __name__ == "__main__":
+    # اجرای Flask در یک ترد
+    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000)).start()
+    # اجرای تحلیل خودکار
+    auto_send_loop()
