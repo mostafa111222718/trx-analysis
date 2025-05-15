@@ -1,8 +1,12 @@
 import requests
 import time
 from datetime import datetime
+from flask import Flask, request
 
-TOKEN = '7665819781:AAFqklWxMbzvtWydzfolKwDZFbS2lZ4SjeM' 
+# =============== پیکربندی ===============
+TOKEN = 'توکن_ربات_تلگرام_اینجا'
+CHAT_ID = 'آی‌دی_چت_اینجا'
+
 # =============== ارسال پیام به تلگرام ===============
 def send_message(message):
     url = f'https://api.telegram.org/bot{TOKEN}/sendMessage'
