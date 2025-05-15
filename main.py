@@ -6,6 +6,7 @@ from flask import Flask, request
 # =============== پیکربندی ===============
 TOKEN = '7665819781:AAFqklWxMbzvtWydzfolKwDZFbS2lZ4SjeM'
 CHAT_ID = '5451942674'
+
 # =============== ارسال پیام به تلگرام ===============
 def send_message(message):
     url = f'https://api.telegram.org/bot{TOKEN}/sendMessage'
